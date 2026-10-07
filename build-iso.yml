@@ -1,0 +1,55 @@
+name: Build FelyOS ISO
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune -af || true
+          df -h /
+
+      - name: Unpack project zip
+        run: |
+          set -e
+          ls -la
+          unzip -q FelyOS*.zip -d proj
+          B="$(find proj -name build.sh | head -n1)"
+          [ -n "$B" ] || { echo "build.sh not found in zip"; exit 1; }
+          echo "PROJ=$(dirname "$B")" >> "$GITHUB_ENV"
+
+      - name: Build in Debian 13 Trixie
+        run: |
+          set -euxo pipefail
+          docker run --rm --privileged -v "$PWD/$PROJ":/work -w /work debian:trixie bash -lc '
+            set -euxo pipefail
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+              live-build debootstrap debian-archive-keyring xorriso squashfs-tools \
+              syslinux syslinux-common isolinux grub-efi-amd64-bin grub-pc-bin \
+              mtools dosfstools rsync ca-certificates curl wget git file cmake g++ make \
+              python3 unzip p7zip-full
+            bash ./build.sh
+          ' 2>&1 | tee build.log
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+
+      - name: Upload ISO
+        uses: actions/upload-artifact@v4
+        with:
+          name: FelyOS-iso
+          path: ${{ env.PROJ }}/FelyOS-0.14-amd64.iso
+          retention-days: 7
+          compression-level: 0
